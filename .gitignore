@@ -1,0 +1,11 @@
+
+.DS_Store
+
+config/*
+cache/*
+
+data/
+result/
+log/
+
+tokenization/
