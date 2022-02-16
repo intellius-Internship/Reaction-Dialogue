@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 from transformers.optimization import AdamW, get_cosine_schedule_with_warmup
 
 from lightning_model import LightningModel
-from utils.model_utills import load_model
+from utils.model_utils import load_model
 from dataloader import AutoRegressionChatData
 
 class AutoRegressiveModel(LightningModel):
