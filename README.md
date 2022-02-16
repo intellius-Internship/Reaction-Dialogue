@@ -1,5 +1,4 @@
-# **Reaction-Classification**
-응답 분류 모델 구축
+# **Reaction-Dialogue**
 
 ### **Approach**
 [핑퐁빌더에서 공유한 2348개의 리액션 분류](https://pingpong.us/)에서 자주 사용되는 115개의 리액션 클래스 선정   
