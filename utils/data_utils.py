@@ -15,13 +15,12 @@ def to_cuda(batch, gpuid):
         if n != "data":
             batch[n] = batch[n].to(dtype=torch.long, device=device)
 
-def tokenize(sent, tokenizer, max_len=128):
+def tokenize(sent, tokenizer, max_len):
     tokens = tokenizer.tokenize(sent)
     seq_len = len(tokens)
     if seq_len > max_len:
         tokens = tokens[:max_len-1] + [tokens[-1]]
         seq_len = len(tokens)
-        assert seq_len == len(tokens), f'{seq_len} ==? {len(tokens)}'
         
     token_ids = tokenizer.convert_tokens_to_ids(tokens)
     attention_mask = [1] * len(token_ids)
@@ -35,7 +34,6 @@ def tokenize(sent, tokenizer, max_len=128):
 def encode(sent, tokenizer, max_len):
     tok_ids, attention_mask = tokenize(sent, tokenizer=tokenizer, max_len=max_len)
     return tok_ids, attention_mask
-
 
 def mkdir_p(path):
     try:

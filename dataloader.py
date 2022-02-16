@@ -1,13 +1,48 @@
+import warnings
 import numpy as np
 import pandas as pd
-import warnings
 
+from ast import literal_eval
 from torch.utils.data import Dataset
-from utils.model_utills import U_TKN, S_TKN
+from utils.model_utils import U_TKN, S_TKN
 
 warnings.filterwarnings(action='ignore')
 
 DELIMITER = '<unused1>'
+
+class PlmData(Dataset):
+    def __init__(self, data_path, tokenizer, max_len):
+        self._data = pd.read_csv(data_path, encoding='utf-8')
+        self.max_len = max_len
+        self.tokenizer = tokenizer
+
+    def __len__(self):
+        return len(self._data)
+
+    def _tokenize(self, text):
+        tokens = self.tokenizer.tokenize(self.tokenizer.cls_token + str(text) + self.tokenizer.sep_token)
+        ids = self.tokenizer.convert_tokens_to_ids(tokens)
+        return ids, len(ids)
+
+    def _padding(self, ids):
+        while len(ids) < self.max_len:
+            ids += [self.tokenizer.pad_token_id]
+
+        if len(ids) > self.max_len:
+            ids = ids[:self.max_len-1] + [ids[-1]]
+        return ids
+
+    def __getitem__(self, idx):
+        turn = self._data.iloc[idx]
+        
+        query = turn['proc_query'] 
+        label = int(turn['label'])
+
+        token_ids, _ = self._tokenize(query)
+        token_ids = self._padding(token_ids)
+
+        attention_masks = [float(id>0) for id in token_ids]
+        return(token_ids, np.array(attention_masks), label)
 
 class AutoRegressionChatData(Dataset):
     def __init__(self, data_path, tokenizer, max_len):
@@ -58,8 +93,9 @@ class AutoRegressionChatData(Dataset):
         turn = self._data.iloc[idx]
         
         query = turn['proc_query']
-        reply_cls = turn['reaction_cls'] if 'reaction_cls' in self._data.columns else None
+        reply_cls = turn['reaction_cls']
         reply = turn['proc_reply']
+
         if reply_cls is not None:
             reply = str(reply) + self.delimiter + str(reply_cls)
 
@@ -105,8 +141,9 @@ class Seq2SeqChatData(Dataset):
         turn = self._data.iloc[index]
         
         query = turn['proc_query']
-        reply_cls = turn['reaction_cls'] if 'reaction_cls' in self._data.columns else None
+        reply_cls = turn['reaction_cls']
         reply = turn['proc_reply']
+        
         if reply_cls is not None:
             reply = reply_cls+self.delimiter+reply
         
@@ -131,6 +168,7 @@ class Seq2SeqChatData(Dataset):
                 'decoder_input_ids': np.array(decoder_input_id, dtype=np.int_),
                 'decoder_attention_mask': np.array(decoder_attention_mask, dtype=np.float_),
                 'labels': np.array(labels, dtype=np.int_)}
+
 
 
 

@@ -1,15 +1,17 @@
 
 # -*- coding: utf-8 -*-
+import torch
+import re
+import pandas as pd
+from os.path import join as pjoin
+from utils.data_utils import encode
+
+from plm import LightningPLM
 from auto_regressive_model import AutoRegressiveModel
 from seq2seq_model import Seq2SeqModel
-import re
-import torch
-import pandas as pd
-from torch import nn
 
+from utils.model_utils import U_TKN, S_TKN
 from dataloader import DELIMITER
-from utils.data_utils import encode
-from utils.model_utills import S_TKN, U_TKN, load_tokenizer
 
 repeatchars_pattern = re.compile('(\D)\\1{2,}')
 doublespace_pattern = re.compile('\s+')
@@ -28,17 +30,26 @@ def proc_reply(reply):
     proc_text = re.sub('(<pad>|<unk>)', '', reply)
     return repeat_normalize(proc_text, num_repeats=4)
 
-def eval_ar(args, model, device, test_data):
-    target = 'reaction_cls' if 'reaction_cls' in test_data.columns else 'reply'
+def tokenize(tokenizer, text, max_len):
+    q_toked = tokenizer.tokenize(tokenizer.cls_token + text + tokenizer.sep_token)
+    
+    if len(q_toked) > max_len:
+        q_toked = q_toked[:max_len-1] + [q_toked[-1]]
+
+    token_ids = tokenizer.convert_tokens_to_ids(q_toked)
+    while len(token_ids) < max_len:
+        token_ids += [tokenizer.pad_token_id]
+
+    return token_ids 
+
+def eval_ar(args, model, tokenizer, device, test_data):
     u_tkn, s_tkn = U_TKN, S_TKN
-    tokenizer = model.tokenizer
 
     reply_list = []
     with torch.no_grad():
         for d in test_data.iterrows():
             row = d[1]
             query = row['proc_query']
-            tgt_reply = row[target]
 
             reply = ''
             q_toked = tokenizer.tokenize(u_tkn + query)
@@ -46,34 +57,34 @@ def eval_ar(args, model, device, test_data):
                 q_toked = [q_toked[0]] + q_toked[-(int(args.max_len/2))+1:]
 
             for iter_ in range(args.max_len):
-                a_toked = tokenizer.tokenize(s_tkn + reply)
-                token_ids = torch.LongTensor(tokenizer.convert_tokens_to_ids(q_toked + a_toked)).to(device=device)
+                r_toked = tokenizer.tokenize(s_tkn + reply)
+                token_ids = torch.LongTensor(tokenizer.convert_tokens_to_ids(q_toked + r_toked)).to(device=device)
 
                 logits = model(token_ids)
                 gen = tokenizer.convert_ids_to_tokens(torch.argmax(logits, dim=-1).squeeze().cpu().tolist())[-1]
                 if gen == tokenizer.eos_token:
                     break
+                if gen == DELIMITER:
+                    gen = '#'
+
                 reply += gen.replace('▁', ' ')
 
             reply= reply.strip()
-            print("Reply: {}".format(reply))
-            
             reply_list.append(reply)
+
+            print("Reply: {}".format(reply))
 
         test_data['generated_reply'] = reply_list
         test_data.to_csv(f'{args.save_dir}/{args.model_name}.csv', index=False)
     
 
-def eval_s2s(args, model, device, test_data):
-    target = 'reaction_cls' if 'reaction_cls' in test_data.columns else 'reply'
-    tokenizer = model.tokenizer
-
+def eval_s2s(args, model, tokenizer, device, test_data):
     reply_list = []
+
     with torch.no_grad():
         for d in test_data.iterrows():
             row = d[1]
-            query = row.query
-            tgt_reply = row[target]
+            query = row['proc_query']
 
             enc_input, attention_mask = encode(tokenizer=tokenizer, \
                 sent=tokenizer.bos_token+query+tokenizer.eos_token, \
@@ -109,11 +120,41 @@ def eval_s2s(args, model, device, test_data):
             print("Query: {}".format(query))
             print("Reply: {}".format(reply))
             reply_list.append(reply)
-           
+
         test_data['generated_reply'] = reply_list
         test_data.to_csv(f'{args.save_dir}/{args.model_name}.csv', index=False)
     
  
+def eval_transformer(args, model, tokenizer, device, test_data):
+
+    pred_list = []
+    count = 0
+    with torch.no_grad():
+        for d in test_data.iterrows():
+            row = d[1]
+            text = row['proc_query']
+            label = int(row['label'])
+
+            assert isinstance(text, str)
+            
+            print("Input Text: %s" % text)
+
+            input_ids = torch.LongTensor(tokenize(tokenizer, text=text, max_len=args.max_len)).unsqueeze(0).to(device=device)
+            attention_mask = None
+
+            logits = model(input_ids=input_ids, attention_mask=attention_mask).detach().cpu()
+            predictions = torch.argmax(logits, dim=-1).detach().cpu().numpy().tolist()
+            print(predictions)
+            pred_list.append(predictions[0]) 
+
+            if predictions[0] == label:
+                count += 1
+
+        test_data['pred_reaction'] = pred_list
+        test_data.to_csv(pjoin(args.save_dir, f'{args.model_name}-{round(count/len(test_data), 2)*100}.csv'), sep='\t', index=False)
+        print(f"Accuracy: {count/len(test_data)}")
+              
+
 def is_valid(query):
     if not re.sub('[\s]+', '', query):
         return False
@@ -124,9 +165,9 @@ def chat_ar(args, model, device):
     tokenizer = model.tokenizer
 
     query = input('사용자 입력: ')
+    
     with torch.no_grad():
         while is_valid(query):
-            print("Query: {}".format(query))
             reply = ''
             q_toked = tokenizer.tokenize(u_tkn + query)
             if len(q_toked) >= args.max_len:
@@ -197,7 +238,6 @@ def chat_s2s(args, model, device):
             print("Reply: {}".format(reply))
 
             query = input('사용자 입력: ')
-           
 
 def evaluation(args, **kwargs):
     base_setting(args)
@@ -206,7 +246,9 @@ def evaluation(args, **kwargs):
 
     print(args.model_pt)
     if args.model_pt is not None:
-        if args.model_type in ['gpt2']:
+        if args.model_type in ['bert', 'electra', 'bigbird', 'roberta']:
+            model = LightningPLM.load_from_checkpoint(checkpoint_path=args.model_pt, hparams=args)
+        elif args.model_type in ['gpt2']:
             model = AutoRegressiveModel.load_from_checkpoint(checkpoint_path=args.model_pt, hparams=args, device=torch.device(device))
         else:
             model = Seq2SeqModel.load_from_checkpoint(checkpoint_path=args.model_pt, hparams=args, device=torch.device(device))
@@ -215,17 +257,22 @@ def evaluation(args, **kwargs):
     model.eval()
     model.freeze()
 
-    test_data_path = f'{args.data_dir}/test.csv'
-    test_data = pd.read_csv(test_data_path)
-    test_data = test_data.dropna(axis=0)
+    test_data = pd.read_csv(pjoin(args.data_dir, 'test.csv'))
+    test_data.dropna(axis=0, inplace=True)
 
-    if args.model_type in ['bart']:
-        if args.chat:
-            chat_s2s(args, model, device)
-        else:
-            eval_s2s(args, model, device, test_data)
-    else:
+    if args.model_type in ['bert', 'electra', 'bigbird', 'roberta']:
+        eval_transformer(args, model=model, tokenizer=model.tokenizer, device=device, test_data=test_data)
+
+    elif args.model_type in ['gpt2']:
         if args.chat:
             chat_ar(args, model, device)
         else:
-            eval_ar(args, model, device, test_data)
+            eval_ar(args, model=model, tokenizer=model.tokenizer, device=device, test_data=test_data)
+    else:
+        if args.chat:
+            chat_s2s(args, model, device)
+        else:
+            eval_s2s(args, model=model, tokenizer=model.tokenizer, device=device, test_data=test_data)
+
+            
+
