@@ -1,26 +1,27 @@
-
-import pandas as pd
 import torch
 import os
 import errno
-import numpy as np
 
-from ast import literal_eval
 from shutil import rmtree
 
+'''
+Description
+-----------
+주어진 문장을 토큰화하여 attention mask와 토큰을 반환
 
-def to_cuda(batch, gpuid):
-    device = torch.device('cuda:%d' % gpuid)
-    for i, n in enumerate(batch):
-        if n != "data":
-            batch[n] = batch[n].to(dtype=torch.long, device=device)
-
+Input:
+------
+    sent: 문장
+    tokenizer: 토크나이저
+    max_len: 최대 길이
+'''
 def tokenize(sent, tokenizer, max_len):
     tokens = tokenizer.tokenize(sent)
     seq_len = len(tokens)
     if seq_len > max_len:
         tokens = tokens[:max_len-1] + [tokens[-1]]
         seq_len = len(tokens)
+        assert seq_len == len(tokens), f'{seq_len} ==? {len(tokens)}'
         
     token_ids = tokenizer.convert_tokens_to_ids(tokens)
     attention_mask = [1] * len(token_ids)
@@ -35,6 +36,11 @@ def encode(sent, tokenizer, max_len):
     tok_ids, attention_mask = tokenize(sent, tokenizer=tokenizer, max_len=max_len)
     return tok_ids, attention_mask
 
+'''
+Description
+-----------
+디렉토리 삭제 및 생성
+'''
 def mkdir_p(path):
     try:
         os.makedirs(path)

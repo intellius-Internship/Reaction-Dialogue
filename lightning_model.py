@@ -3,7 +3,8 @@ import argparse
 from pytorch_lightning.core.lightning import LightningModule
 
 class LightningModel(LightningModule):
-    def __init__(self, hparams):
+    """Super class"""
+    def __init__(self, hparams, device='cuda'):
         super(LightningModel, self).__init__()
         self.hparams = hparams
         self.model_type = hparams.model_type.lower()
